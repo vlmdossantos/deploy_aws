@@ -4,6 +4,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { SMA } = require('technicalindicators');
 const fs = require('fs');
+const basicAuth = require('express-basic-auth');
 
 const app = express();
 app.use(express.json());
@@ -11,6 +12,26 @@ app.use(express.json());
 const symbol = process.env.SYMBOL;
 const apiURL = process.env.API_URL;
 const logFile = 'scalping_data.log';
+
+// Função para customizar a mensagem de falha de autenticação
+const getUnauthorizedResponse = req => 'Credenciais incorretas';
+
+// Middleware de autenticação básica
+app.use('/resultado', basicAuth({
+    users: { [process.env.BASIC_AUTH_USER]: process.env.BASIC_AUTH_PASSWORD },
+    challenge: true,
+    unauthorizedResponse: getUnauthorizedResponse
+}));
+
+// Rota para exibir o conteúdo do log
+app.get('/resultado', (req, res) => {
+    fs.readFile(logFile, 'utf8', (err, data) => {
+        if (err) {
+            return res.status(500).send('Erro ao ler o arquivo de log.');
+        }
+        res.send(`<html><body><pre>${data}</pre></body></html>`);
+    });
+});
 
 let lastBuyPrice = null;
 let trades = [];
@@ -23,47 +44,34 @@ async function getPrices() {
             limit: 10
         }
     });
-
     return response.data.map(kline => parseFloat(kline[4]));
 }
 
 async function newOrder(quantity, side, latestPrice) {
     let profit = 0;
-
     if (side === 'SELL' && lastBuyPrice != null) {
         profit = (latestPrice - lastBuyPrice) * quantity;
     }
-
     if (side === 'BUY') {
         lastBuyPrice = latestPrice;
     } else if (side === 'SELL') {
-        // Reset last buy price after selling
         lastBuyPrice = null;
     }
-
     const trade = { time: new Date(), side, quantity, price: latestPrice, profit: profit };
-
-    // Only log trades when a sale is made or a purchase (to track next sale)
-    if (side === 'SELL' || lastBuyPrice != null) {
-        trades.push(trade);
-        fs.appendFileSync(logFile, JSON.stringify(trade) + '\n');
-    }
+    trades.push(trade);
+    fs.appendFileSync(logFile, JSON.stringify(trade) + '\n');
 }
 
 async function checkMarketAndScalp() {
     const prices = await getPrices();
     const smaShort = SMA.calculate({ period: 5, values: prices });
     const smaLong = SMA.calculate({ period: 10, values: prices });
-
     const latestPrice = prices[prices.length - 1];
     const latestShortSMA = smaShort[smaShort.length - 1];
     const latestLongSMA = smaLong[smaLong.length - 1];
-
     if (latestShortSMA > latestLongSMA && lastBuyPrice == null) {
-        console.log("Estratégia Scalping: COMPRA");
         await newOrder("0.01", "BUY", latestPrice);
     } else if (latestShortSMA < latestLongSMA && lastBuyPrice != null) {
-        console.log("Estratégia Scalping: VENDA");
         await newOrder("0.01", "SELL", latestPrice);
     }
 }
@@ -73,7 +81,8 @@ app.get('/check', async (req, res) => {
     res.send('Verificação de mercado e operações de scalping executadas.');
 });
 
-app.listen(process.env.PORT, () => {
-    console.log(`Servidor iniciado na porta ${process.env.PORT}`);
-    setInterval(checkMarketAndScalp, 1000);  // Execução a cada segundo
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Servidor iniciado na porta ${port}`);
+    setInterval(checkMarketAndScalp, 1000);
 });
