@@ -5,6 +5,9 @@ const crypto = require('crypto');
 const { SMA } = require('technicalindicators');
 const fs = require('fs');
 const basicAuth = require('express-basic-auth');
+const json2xls = require('json2xls');
+const path = require('path');
+
 
 const app = express();
 app.use(express.json());
@@ -29,9 +32,38 @@ app.get('/resultado', (req, res) => {
         if (err) {
             return res.status(500).send('Erro ao ler o arquivo de log.');
         }
-        res.send(`<html><body><pre>${data}</pre></body></html>`);
+
+        const trades = data
+            .split('\n')
+            .filter(line => line && JSON.parse(line).profit !== 0)
+            .map(line => JSON.parse(line));
+
+        let html = '<html><head><title>Resultados</title></head><body>';
+        html += '<table border="1"><tr><th>Time</th><th>Side</th><th>Quantity</th><th>Price</th><th>Profit</th></tr>';
+
+        trades.forEach(trade => {
+            html += `<tr><td>${trade.time}</td><td>${trade.side}</td><td>${trade.quantity}</td><td>${trade.price}</td><td>${trade.profit.toFixed(2)}</td></tr>`;
+        });
+
+        html += '</table>';
+
+        // Gerar link para download do XLS
+        const xls = json2xls(trades);
+        const filePath = path.join(__dirname, 'trades.xlsx');
+        fs.writeFileSync(filePath, xls, 'binary');
+        html += `<a href="/download">Baixar XLS</a>`;
+
+        html += '</body></html>';
+        res.send(html);
     });
 });
+
+// Rota para download do XLS
+app.get('/download', (req, res) => {
+    const filePath = path.join(__dirname, 'trades.xlsx');
+    res.download(filePath);
+});
+
 
 let lastBuyPrice = null;
 let trades = [];

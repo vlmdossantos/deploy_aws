@@ -60,3 +60,5 @@
 {"time":"2024-03-23T19:05:18.281Z","side":"BUY","quantity":"0.01","price":66244,"profit":0}
 {"time":"2024-03-23T19:06:48.151Z","side":"BUY","quantity":"0.01","price":65371.84,"profit":0}
 {"time":"2024-03-23T19:07:12.063Z","side":"SELL","quantity":"0.01","price":65361.6,"profit":-0.10239999999997963}
+{"time":"2024-03-23T19:39:50.231Z","side":"BUY","quantity":"0.01","price":65108.89,"profit":0}
+{"time":"2024-03-23T19:39:58.294Z","side":"SELL","quantity":"0.01","price":64980,"profit":-1.2888999999999942}
