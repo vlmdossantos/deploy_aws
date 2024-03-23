@@ -12,7 +12,6 @@ const symbol = process.env.SYMBOL;
 const apiURL = process.env.API_URL;
 const logFile = 'scalping_data.log';
 
-let currentPosition = null;
 let lastBuyPrice = null;
 let trades = [];
 
@@ -29,35 +28,25 @@ async function getPrices() {
 }
 
 async function newOrder(quantity, side, latestPrice) {
-    const data = {
-        symbol: symbol,
-        side: side,
-        type: 'MARKET',
-        quantity: quantity,
-        timestamp: Date.now(),
-        recvWindow: 5000
-    };
+    let profit = 0;
 
-    const signature = crypto.createHmac('sha256', process.env.SECRET_KEY).update(new URLSearchParams(data).toString()).digest('hex');
+    if (side === 'SELL' && lastBuyPrice != null) {
+        profit = (latestPrice - lastBuyPrice) * quantity;
+    }
 
-    try {
-        console.log(`Executando ordem: ${side} ${quantity} ${symbol}`);
-        currentPosition = side;
-        
-        if (side === 'BUY') {
-            lastBuyPrice = latestPrice;
-        }
-        
-        const profit = side === 'SELL' && lastBuyPrice ? (latestPrice - lastBuyPrice) * quantity : 0;
+    if (side === 'BUY') {
+        lastBuyPrice = latestPrice;
+    } else if (side === 'SELL') {
+        // Reset last buy price after selling
+        lastBuyPrice = null;
+    }
 
-        const trade = { time: new Date(), side: side, quantity: quantity, price: latestPrice, profit: profit };
+    const trade = { time: new Date(), side, quantity, price: latestPrice, profit: profit };
+
+    // Only log trades when a sale is made or a purchase (to track next sale)
+    if (side === 'SELL' || lastBuyPrice != null) {
         trades.push(trade);
-
-        // Log trade information
         fs.appendFileSync(logFile, JSON.stringify(trade) + '\n');
-
-    } catch (error) {
-        console.error('Erro ao executar ordem:', error);
     }
 }
 
@@ -70,12 +59,10 @@ async function checkMarketAndScalp() {
     const latestShortSMA = smaShort[smaShort.length - 1];
     const latestLongSMA = smaLong[smaLong.length - 1];
 
-    console.log(`Último preço: ${latestPrice}, SMA Curto: ${latestShortSMA}, SMA Longo: ${latestLongSMA}`);
-
-    if (latestShortSMA > latestLongSMA && currentPosition !== 'BUY') {
+    if (latestShortSMA > latestLongSMA && lastBuyPrice == null) {
         console.log("Estratégia Scalping: COMPRA");
         await newOrder("0.01", "BUY", latestPrice);
-    } else if (latestShortSMA < latestLongSMA && currentPosition !== 'SELL') {
+    } else if (latestShortSMA < latestLongSMA && lastBuyPrice != null) {
         console.log("Estratégia Scalping: VENDA");
         await newOrder("0.01", "SELL", latestPrice);
     }
