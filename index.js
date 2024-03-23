@@ -1,75 +1,92 @@
-//Carrega arquivo de configuração
-require("dotenv").config();
-//Carregar express que é uma função para criar o servidor
-const express = require("express");
-
-//Cria o servidor
-const app = express();
-
-app.use(express.json());
-
-app.use('/comprar', async (req, res, next) => { 
-    console.log(req.originalUrl);
-    console.log(req.body);
-    
-    //Tamanho da ordem COMPRA
-    const order = await newOrder("0.01", "BUY");
-    console.log(order);
-    res.json(order);
-})
-
-app.use('/vender', async (req, res, next) => { 
-    console.log(req.originalUrl);
-    console.log(req.body);
-     
-    //Tamanho da ordem VENDA
-    const order = await newOrder("0.01", "SELL");
-    console.log(order);
-    res.json(order);
-
-})
-
-app.use('/', (req, res, next) => { 
-    console.log("Hello World");
-    res.send(`Hello World`);    
-})
-
-//Inicializar a aplicação e traz o valor setado em PORT do arquivo .env
-app.listen(process.env.PORT, () => {
-    console.log("Server started at " + process.env.PORT);
-});
-
-
-//aqui começa o codigo para envio de ordens a binance
+require('dotenv').config();
+const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
+const { SMA } = require('technicalindicators');
+const fs = require('fs');
 
-async function newOrder(quantity, side) {
+const app = express();
+app.use(express.json());
+
+const symbol = process.env.SYMBOL;
+const apiURL = process.env.API_URL;
+const logFile = 'scalping_data.log';
+
+let currentPosition = null;
+let lastBuyPrice = null;
+let trades = [];
+
+async function getPrices() {
+    const response = await axios.get(`${apiURL}/v3/klines`, {
+        params: {
+            symbol: symbol,
+            interval: '1m',
+            limit: 10
+        }
+    });
+
+    return response.data.map(kline => parseFloat(kline[4]));
+}
+
+async function newOrder(quantity, side, latestPrice) {
     const data = {
-        symbol: process.env.SYMBOL,
-        side,
+        symbol: symbol,
+        side: side,
         type: 'MARKET',
-        quantity,
+        quantity: quantity,
         timestamp: Date.now(),
-        recvWindow: 60000//máximo permitido, default 5000
+        recvWindow: 5000
     };
 
-    const signature = crypto
-        .createHmac('sha256', process.env.SECRET_KEY)
-        .update(`${new URLSearchParams(data)}`)
-        .digest('hex');
-
-    const newData = { ...data, signature };
-    const qs = `?${new URLSearchParams(newData)}`;
+    const signature = crypto.createHmac('sha256', process.env.SECRET_KEY).update(new URLSearchParams(data).toString()).digest('hex');
 
     try {
-        const result = await axios({
-            method: 'POST',
-            url: `${process.env.API_URL}/v3/order${qs}`,
-            headers: { 'X-MBX-APIKEY': process.env.API_KEY }
-        });
-        console.log(result.data);
-    } catch (err) {
-        console.error(err);
+        console.log(`Executando ordem: ${side} ${quantity} ${symbol}`);
+        currentPosition = side;
+        
+        if (side === 'BUY') {
+            lastBuyPrice = latestPrice;
+        }
+        
+        const profit = side === 'SELL' && lastBuyPrice ? (latestPrice - lastBuyPrice) * quantity : 0;
+
+        const trade = { time: new Date(), side: side, quantity: quantity, price: latestPrice, profit: profit };
+        trades.push(trade);
+
+        // Log trade information
+        fs.appendFileSync(logFile, JSON.stringify(trade) + '\n');
+
+    } catch (error) {
+        console.error('Erro ao executar ordem:', error);
     }
 }
+
+async function checkMarketAndScalp() {
+    const prices = await getPrices();
+    const smaShort = SMA.calculate({ period: 5, values: prices });
+    const smaLong = SMA.calculate({ period: 10, values: prices });
+
+    const latestPrice = prices[prices.length - 1];
+    const latestShortSMA = smaShort[smaShort.length - 1];
+    const latestLongSMA = smaLong[smaLong.length - 1];
+
+    console.log(`Último preço: ${latestPrice}, SMA Curto: ${latestShortSMA}, SMA Longo: ${latestLongSMA}`);
+
+    if (latestShortSMA > latestLongSMA && currentPosition !== 'BUY') {
+        console.log("Estratégia Scalping: COMPRA");
+        await newOrder("0.01", "BUY", latestPrice);
+    } else if (latestShortSMA < latestLongSMA && currentPosition !== 'SELL') {
+        console.log("Estratégia Scalping: VENDA");
+        await newOrder("0.01", "SELL", latestPrice);
+    }
+}
+
+app.get('/check', async (req, res) => {
+    await checkMarketAndScalp();
+    res.send('Verificação de mercado e operações de scalping executadas.');
+});
+
+app.listen(process.env.PORT, () => {
+    console.log(`Servidor iniciado na porta ${process.env.PORT}`);
+    setInterval(checkMarketAndScalp, 1000);  // Execução a cada segundo
+});
